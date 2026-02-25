@@ -116,53 +116,12 @@ with tab1:
             file_name=f"artikel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
 
-# =========================
-# TAB IMAGE
-# =========================
-
-with tab2:
-
-    st.subheader("🎨 AI Image Generator")
-
-    image_prompt = st.text_area("Prompt Gambar", "a sunset over mountains")
-
-    image_model = st.selectbox(
-        "Model Image",
-        ["x/z-image-turbo"]
-    )
-
-    if st.button("🖼 Generate Image"):
-
-        messages = [{"role": "user", "content": image_prompt}]
-        final_image = None
-
-        for part in client.chat(
-            model=image_model,
-            messages=messages,
-            stream=True
-        ):
-            if part.get("message") and part["message"].get("images"):
-                final_image = part["message"]["images"][0]
-
-        if final_image:
-            image_bytes = base64.b64decode(final_image)
-            image = Image.open(BytesIO(image_bytes))
-            st.image(image, use_column_width=True)
-
-            st.download_button(
-                "📥 Download Image",
-                image_bytes,
-                file_name="generated.png",
-                mime="image/png"
-            )
-        else:
-            st.error("❌ Gambar tidak dihasilkan")
 
 # =========================
 # TAB CODING CHAT AGENT (WITH MEMORY)
 # =========================
 
-with tab3:
+with tab2:
 
     st.subheader("💻 Coding Chat Agent (Revisi Mode)")
 
