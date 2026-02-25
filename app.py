@@ -69,10 +69,10 @@ tone = st.sidebar.selectbox(
 # TABS
 # =========================
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2= st.tabs([
     "📝 Artikel",
-    "🎨 Image",
     "💻 Coding Agent"
+    
 ])
 
 # =========================
