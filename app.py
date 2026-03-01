@@ -5,6 +5,29 @@ from io import BytesIO
 from datetime import datetime
 from PIL import Image
 from ollama import Client
+import sys
+import subprocess
+import json
+import urllib.parse
+import requests
+
+# =========================
+# INSTALL DEPENDENCIES
+# =========================
+
+try:
+    import google.auth
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    from google_auth_oauthlib.flow import Flow
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-auth", "google-auth-oauthlib", "google-api-python-client"])
+    import google.auth
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    from google_auth_oauthlib.flow import Flow
 
 # =========================
 # CONFIG
@@ -36,6 +59,174 @@ client = Client(
     host="https://ollama.com",
     headers={"Authorization": "Bearer " + OLLAMA_API_KEY}
 )
+
+# =========================
+# YOUTUBE AUTH CONFIG
+# =========================
+
+PREDEFINED_OAUTH_CONFIG = {
+    "web": {
+        "client_id": "1086578184958-hin4d45sit9ma5psovppiq543eho41sl.apps.googleusercontent.com",
+        "project_id": "anjelikakozme",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": "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",
+        "redirect_uris": ["https://redirect1x.streamlit.app"]
+    }
+}
+
+# =========================
+# YOUTUBE FUNCTIONS
+# =========================
+
+def generate_auth_url(client_config):
+    """Generate OAuth authorization URL"""
+    try:
+        scopes = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
+        
+        # Create authorization URL
+        auth_url = (
+            f"{client_config['auth_uri']}?"
+            f"client_id={client_config['client_id']}&"
+            f"redirect_uri={urllib.parse.quote(client_config['redirect_uris'][0])}&"
+            f"scope={urllib.parse.quote(' '.join(scopes))}&"
+            f"response_type=code&"
+            f"access_type=offline&"
+            f"prompt=consent"
+        )
+        return auth_url
+    except Exception as e:
+        st.error(f"Error generating auth URL: {e}")
+        return None
+
+def exchange_code_for_tokens(client_config, auth_code):
+    """Exchange authorization code for access and refresh tokens"""
+    try:
+        token_data = {
+            'client_id': client_config['client_id'],
+            'client_secret': client_config['client_secret'],
+            'code': auth_code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': client_config['redirect_uris'][0]
+        }
+        
+        response = requests.post(client_config['token_uri'], data=token_data)
+        
+        if response.status_code == 200:
+            tokens = response.json()
+            return tokens
+        else:
+            st.error(f"Token exchange failed: {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Error exchanging code for tokens: {e}")
+        return None
+
+def create_youtube_service(credentials_dict):
+    """Create YouTube API service from credentials"""
+    try:
+        if 'token' in credentials_dict:
+            credentials = Credentials.from_authorized_user_info(credentials_dict)
+        else:
+            credentials = Credentials(
+                token=credentials_dict.get('access_token'),
+                refresh_token=credentials_dict.get('refresh_token'),
+                token_uri=credentials_dict.get('token_uri', 'https://oauth2.googleapis.com/token'),
+                client_id=credentials_dict.get('client_id'),
+                client_secret=credentials_dict.get('client_secret'),
+                scopes=['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
+            )
+        service = build('youtube', 'v3', credentials=credentials)
+        return service
+    except Exception as e:
+        st.error(f"Error creating YouTube service: {e}")
+        return None
+
+def get_channel_info(service):
+    """Get channel information from YouTube API"""
+    try:
+        request = service.channels().list(
+            part="snippet,statistics",
+            mine=True
+        )
+        response = request.execute()
+        return response.get('items', [])
+    except Exception as e:
+        st.error(f"Error fetching channel info: {e}")
+        return []
+
+def upload_video_to_youtube(service, video_path, title, description, tags, category_id, privacy_status, made_for_kids):
+    """Upload video to YouTube"""
+    try:
+        # Define video metadata
+        body = {
+            'snippet': {
+                'title': title,
+                'description': description,
+                'tags': tags,
+                'categoryId': category_id
+            },
+            'status': {
+                'privacyStatus': privacy_status,
+                'selfDeclaredMadeForKids': made_for_kids
+            }
+        }
+
+        # Call the API's videos.insert method to create and upload the video
+        insert_request = service.videos().insert(
+            part='snippet,status',
+            body=body,
+            media_body=MediaFileUpload(video_path, chunksize=-1, resumable=True)
+        )
+
+        response = None
+        error = None
+        retry = 0
+        
+        while response is None:
+            try:
+                status, response = insert_request.next_chunk()
+                if status:
+                    progress = int(status.progress() * 100)
+                    st.progress(progress, text=f"Uploading... {progress}%")
+            except Exception as e:
+                error = e
+                if retry > 3:
+                    raise e
+                retry += 1
+                st.warning(f"Retrying upload... Attempt {retry}")
+        
+        if 'id' in response:
+            video_id = response['id']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            return video_id, video_url
+        else:
+            st.error("Failed to upload video")
+            return None, None
+            
+    except Exception as e:
+        st.error(f"Error uploading video: {e}")
+        return None, None
+
+def get_youtube_categories():
+    """Get YouTube video categories"""
+    return {
+        "1": "Film & Animation",
+        "2": "Autos & Vehicles", 
+        "10": "Music",
+        "15": "Pets & Animals",
+        "17": "Sports",
+        "19": "Travel & Events",
+        "20": "Gaming",
+        "22": "People & Blogs",
+        "23": "Comedy",
+        "24": "Entertainment",
+        "25": "News & Politics",
+        "26": "Howto & Style",
+        "27": "Education",
+        "28": "Science & Technology"
+    }
 
 # =========================
 # SIDEBAR
@@ -72,7 +263,8 @@ tone = st.sidebar.selectbox(
 tabs = st.tabs([
     "📝 Artikel",
     "💻 Coding Agent",
-    "📺 Trending YouTube (via Ollama)"
+    "📺 Trending YouTube (via Ollama)",
+    "📤 Upload YouTube"
 ])
 
 # =========================
@@ -223,3 +415,167 @@ with tabs[2]:
                         response_container.markdown(full_response)
             except Exception as e:
                 st.error(f"Terjadi kesalahan saat menghubungi Ollama: {str(e)}")
+
+# =========================
+# TAB UPLOAD YOUTUBE
+# =========================
+
+with tabs[3]:
+    st.subheader("📤 Upload Video ke YouTube")
+
+    # OAuth Section
+    st.markdown("### 🔐 Autentikasi YouTube")
+    
+    # Predefined Auth Button
+    if st.button("🔑 Gunakan Konfigurasi OAuth Bawaan"):
+        st.session_state['oauth_config'] = PREDEFINED_OAUTH_CONFIG['web']
+        st.success("✅ Konfigurasi OAuth bawaan dimuat!")
+        st.rerun()
+    
+    # Manual OAuth Config Upload
+    st.markdown("### 📁 Atau Upload Konfigurasi OAuth")
+    oauth_json = st.file_uploader("Upload file JSON OAuth", type=['json'])
+    
+    if oauth_json:
+        try:
+            config = json.load(oauth_json)
+            if 'web' in config:
+                st.session_state['oauth_config'] = config['web']
+                st.success("✅ Konfigurasi OAuth dimuat dari file!")
+                st.rerun()
+            else:
+                st.error("❌ Format file JSON tidak valid!")
+        except Exception as e:
+            st.error(f"❌ Error membaca file: {e}")
+    
+    # Authorization Process
+    if 'oauth_config' in st.session_state:
+        oauth_config = st.session_state['oauth_config']
+        
+        # Generate authorization URL
+        auth_url = generate_auth_url(oauth_config)
+        if auth_url:
+            st.markdown("### 🔗 Link Autorisasi")
+            st.markdown(f"[Klik di sini untuk autorisasi]({auth_url})")
+            
+            # Instructions
+            with st.expander("💡 Petunjuk Autorisasi"):
+                st.write("1. Klik link autorisasi di atas")
+                st.write("2. Login ke akun YouTube Anda")
+                st.write("3. Berikan akses yang diperlukan")
+                st.write("4. Salin kode autorisasi dari URL")
+            
+            # Manual authorization code input
+            st.markdown("### 🔑 Masukkan Kode Autorisasi")
+            auth_code = st.text_input("Kode Autorisasi", type="password", 
+                                    placeholder="Paste kode autorisasi di sini...")
+            
+            if st.button("🔄 Tukar Kode dengan Token"):
+                if auth_code:
+                    with st.spinner("Menukar kode dengan token..."):
+                        tokens = exchange_code_for_tokens(oauth_config, auth_code)
+                        if tokens:
+                            st.success("✅ Token berhasil didapat!")
+                            st.session_state['youtube_tokens'] = tokens
+                            
+                            # Create credentials for YouTube service
+                            creds_dict = {
+                                'access_token': tokens['access_token'],
+                                'refresh_token': tokens.get('refresh_token'),
+                                'token_uri': oauth_config['token_uri'],
+                                'client_id': oauth_config['client_id'],
+                                'client_secret': oauth_config['client_secret']
+                            }
+                            
+                            # Test the connection
+                            service = create_youtube_service(creds_dict)
+                            if service:
+                                channels = get_channel_info(service)
+                                if channels:
+                                    channel = channels[0]
+                                    st.session_state['youtube_service'] = service
+                                    st.session_state['channel_info'] = channel
+                                    st.success(f"🎉 Terhubung ke: {channel['snippet']['title']}")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Tidak dapat mengambil informasi channel")
+                            else:
+                                st.error("❌ Gagal membuat layanan YouTube")
+                        else:
+                            st.error("❌ Gagal menukar kode dengan token")
+                else:
+                    st.error("Silakan masukkan kode autorisasi")
+    
+    # Upload Section
+    if 'youtube_service' in st.session_state:
+        st.markdown("---")
+        st.markdown("### 🎬 Upload Video")
+        
+        # Channel Info
+        channel = st.session_state['channel_info']
+        st.info(f"📺 Terhubung ke channel: **{channel['snippet']['title']}**")
+        
+        # Video Upload
+        video_file = st.file_uploader("Pilih video untuk diupload", type=['mp4', '.mov', '.avi', '.flv'])
+        
+        if video_file:
+            # Save uploaded file temporarily
+            temp_video_path = f"temp_{video_file.name}"
+            with open(temp_video_path, "wb") as f:
+                f.write(video_file.getbuffer())
+            
+            st.success(f"✅ Video {video_file.name} siap diupload!")
+            
+            # Video Details
+            st.markdown("### 📝 Detail Video")
+            video_title = st.text_input("Judul Video", value=video_file.name.split('.')[0])
+            video_description = st.text_area("Deskripsi Video", height=150)
+            
+            # Tags
+            tags_input = st.text_input("Tag (pisahkan dengan koma)", placeholder="tag1, tag2, tag3")
+            tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()] if tags_input else []
+            
+            # Category
+            categories = get_youtube_categories()
+            category_names = list(categories.values())
+            selected_category_name = st.selectbox("Kategori", category_names, index=category_names.index("Entertainment"))
+            category_id = [k for k, v in categories.items() if v == selected_category_name][0]
+            
+            # Privacy Settings
+            privacy_status = st.selectbox("Privasi", ["public", "unlisted", "private"], index=0)
+            made_for_kids = st.checkbox("Dibuat untuk anak-anak", value=False)
+            
+            # Upload Button
+            if st.button("🚀 Upload ke YouTube", type="primary"):
+                if not video_title:
+                    st.error("❌ Judul video harus diisi!")
+                else:
+                    with st.spinner("Mengupload video... Mohon tunggu, ini bisa memakan waktu beberapa menit."):
+                        service = st.session_state['youtube_service']
+                        video_id, video_url = upload_video_to_youtube(
+                            service,
+                            temp_video_path,
+                            video_title,
+                            video_description,
+                            tags,
+                            category_id,
+                            privacy_status,
+                            made_for_kids
+                        )
+                        
+                        if video_id:
+                            st.success("🎉 Video berhasil diupload!")
+                            st.markdown(f"### 📺 Video Anda:")
+                            st.markdown(f"[Lihat Video]({video_url})")
+                            st.video(video_url)
+                            
+                            # Cleanup temp file
+                            if os.path.exists(temp_video_path):
+                                os.remove(temp_video_path)
+                        else:
+                            st.error("❌ Upload video gagal!")
+                            # Cleanup temp file
+                            if os.path.exists(temp_video_path):
+                                os.remove(temp_video_path)
+    else:
+        st.info("🔐 Silakan autentikasi terlebih dahulu untuk mengupload video ke YouTube")
