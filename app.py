@@ -228,6 +228,51 @@ def get_youtube_categories():
         "28": "Science & Technology"
     }
 
+def generate_video_metadata_with_ai(video_file, model_name):
+    """Generate video title, description, and hashtags using AI"""
+    try:
+        # Create a prompt based on filename
+        filename = video_file.name.split('.')[0]
+        prompt = f"""
+        Berdasarkan nama file video: "{filename}"
+        Buatlah:
+        1. Judul video yang menarik (maks 100 karakter)
+        2. Deskripsi video yang informatif (200-300 kata)
+        3. 5 hashtag yang relevan dan populer
+        
+        Format jawaban:
+        JUDUL: [judul video]
+        DESKRIPSI: [deskripsi video]
+        HASHTAG: [hashtag1, hashtag2, hashtag3, hashtag4, hashtag5]
+        """
+        
+        messages = [{"role": "user", "content": prompt}]
+        
+        full_response = ""
+        for part in client.chat(model=model_name, messages=messages, stream=True):
+            if part.message.content:
+                full_response += part.message.content
+        
+        # Parse response
+        lines = full_response.strip().split('\n')
+        title = ""
+        description = ""
+        hashtags = []
+        
+        for line in lines:
+            if line.startswith("JUDUL:"):
+                title = line.replace("JUDUL:", "").strip()
+            elif line.startswith("DESKRIPSI:"):
+                description = line.replace("DESKRIPSI:", "").strip()
+            elif line.startswith("HASHTAG:"):
+                hashtags_str = line.replace("HASHTAG:", "").strip()
+                hashtags = [tag.strip() for tag in hashtags_str.strip("[]").split(",")]
+        
+        return title, description, hashtags
+    except Exception as e:
+        st.error(f"Error generating metadata with AI: {e}")
+        return "", "", []
+
 # =========================
 # SIDEBAR
 # =========================
@@ -526,13 +571,42 @@ with tabs[3]:
             
             st.success(f"✅ Video {video_file.name} siap diupload!")
             
+            # AI Metadata Generation
+            st.markdown("### 🤖 Generasi Metadata dengan AI")
+            use_ai_metadata = st.checkbox("Gunakan AI untuk generasi judul, deskripsi, dan hashtag", value=True)
+            
+            if use_ai_metadata:
+                with st.spinner("Menghasilkan metadata dengan AI..."):
+                    ai_title, ai_description, ai_hashtags = generate_video_metadata_with_ai(video_file, model_name)
+                
+                if ai_title and ai_description:
+                    st.success("✅ Metadata berhasil dihasilkan dengan AI!")
+                else:
+                    st.warning("⚠️ Gagal menghasilkan metadata dengan AI, gunakan input manual")
+                    use_ai_metadata = False
+            
             # Video Details
             st.markdown("### 📝 Detail Video")
-            video_title = st.text_input("Judul Video", value=video_file.name.split('.')[0])
-            video_description = st.text_area("Deskripsi Video", height=150)
             
-            # Tags
-            tags_input = st.text_input("Tag (pisahkan dengan koma)", placeholder="tag1, tag2, tag3")
+            # Title Input
+            if use_ai_metadata and ai_title:
+                video_title = st.text_input("Judul Video", value=ai_title)
+            else:
+                video_title = st.text_input("Judul Video", value=video_file.name.split('.')[0])
+            
+            # Description Input
+            if use_ai_metadata and ai_description:
+                video_description = st.text_area("Deskripsi Video", value=ai_description, height=150)
+            else:
+                video_description = st.text_area("Deskripsi Video", height=150)
+            
+            # Tags Input
+            if use_ai_metadata and ai_hashtags:
+                default_tags = ", ".join(ai_hashtags)
+                tags_input = st.text_input("Tag (pisahkan dengan koma)", value=default_tags, placeholder="tag1, tag2, tag3")
+            else:
+                tags_input = st.text_input("Tag (pisahkan dengan koma)", placeholder="tag1, tag2, tag3")
+            
             tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()] if tags_input else []
             
             # Category
