@@ -228,17 +228,15 @@ def get_youtube_categories():
         "28": "Science & Technology"
     }
 
-def generate_video_metadata_with_ai(video_file, model_name):
-    """Generate video title, description, and hashtags using AI"""
+def generate_video_metadata_with_ai(keywords, model_name):
+    """Generate video title, description, and hashtags using AI based on keywords"""
     try:
-        # Create a prompt based on filename
-        filename = video_file.name.split('.')[0]
         prompt = f"""
-        Berdasarkan nama file video: "{filename}"
+        Berdasarkan keyword: "{keywords}"
         Buatlah:
-        1. Judul video yang menarik (maks 100 karakter)
-        2. Deskripsi video yang informatif (200-300 kata)
-        3. 5 hashtag yang relevan dan populer
+        1. Judul video yang menarik dan SEO-friendly (maks 100 karakter)
+        2. Deskripsi video yang informatif dan engaging (200-300 kata)
+        3. 5 hashtag yang relevan dan populer untuk meningkatkan reach
         
         Format jawaban:
         JUDUL: [judul video]
@@ -573,17 +571,32 @@ with tabs[3]:
             
             # AI Metadata Generation
             st.markdown("### 🤖 Generasi Metadata dengan AI")
-            use_ai_metadata = st.checkbox("Gunakan AI untuk generasi judul, deskripsi, dan hashtag", value=True)
+            st.info("Masukkan keyword untuk menghasilkan judul, deskripsi, dan hashtag yang optimal")
             
-            if use_ai_metadata:
-                with st.spinner("Menghasilkan metadata dengan AI..."):
-                    ai_title, ai_description, ai_hashtags = generate_video_metadata_with_ai(video_file, model_name)
-                
-                if ai_title and ai_description:
-                    st.success("✅ Metadata berhasil dihasilkan dengan AI!")
-                else:
-                    st.warning("⚠️ Gagal menghasilkan metadata dengan AI, gunakan input manual")
-                    use_ai_metadata = False
+            # Keyword Input
+            keywords = st.text_input(".Keyword untuk Video", placeholder="Contoh: tutorial python, masak enak, review gadget")
+            
+            # AI Metadata Generation Button
+            use_ai_metadata = False
+            ai_title, ai_description, ai_hashtags = "", "", []
+            
+            if keywords:
+                if st.button("🧠 Hasilkan Metadata dengan AI"):
+                    with st.spinner("Menghasilkan metadata dengan AI berdasarkan keyword..."):
+                        ai_title, ai_description, ai_hashtags = generate_video_metadata_with_ai(keywords, model_name)
+                    
+                    if ai_title and ai_description:
+                        st.success("✅ Metadata berhasil dihasilkan dengan AI!")
+                        use_ai_metadata = True
+                    else:
+                        st.warning("⚠️ Gagal menghasilkan metadata dengan AI")
+            
+            # Display AI Results if available
+            if use_ai_metadata and ai_title:
+                st.markdown("#### Hasil Generasi AI:")
+                st.write(f"**Judul:** {ai_title}")
+                st.write(f"**Deskripsi:** {ai_description}")
+                st.write(f"**Hashtag:** {', '.join(ai_hashtags)}")
             
             # Video Details
             st.markdown("### 📝 Detail Video")
